@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">小爱指令Hook</string>
+    <string name="app_description">Hook 小米语音助手文本输入、语音识别和返回结果，通过通知显示捕获内容。</string>
+</resources>

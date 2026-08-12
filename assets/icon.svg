@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+
+  <!-- 深灰圆角方块背景 -->
+  <rect x="0" y="0" width="512" height="512" rx="100" ry="100" fill="#2C3038"/>
+
+  <!-- 麦克风主体 — 椭圆头部 -->
+  <ellipse cx="256" cy="190" rx="72" ry="100" fill="white"/>
+
+  <!-- 麦克风声波槽 — 左侧4条 -->
+  <rect x="218" y="140" width="16" height="5" rx="2.5" fill="#2C3038"/>
+  <rect x="218" y="160" width="16" height="5" rx="2.5" fill="#2C3038"/>
+  <rect x="218" y="180" width="16" height="5" rx="2.5" fill="#2C3038"/>
+  <rect x="218" y="200" width="16" height="5" rx="2.5" fill="#2C3038"/>
+  <rect x="218" y="220" width="16" height="5" rx="2.5" fill="#2C3038"/>
+
+  <!-- 麦克风声波槽 — 右侧4条 -->
+  <rect x="278" y="140" width="16" height="5" rx="2.5" fill="#2C3038"/>
+  <rect x="278" y="160" width="16" height="5" rx="2.5" fill="#2C3038"/>
+  <rect x="278" y="180" width="16" height="5" rx="2.5" fill="#2C3038"/>
+  <rect x="278" y="200" width="16" height="5" rx="2.5" fill="#2C3038"/>
+  <rect x="278" y="220" width="16" height="5" rx="2.5" fill="#2C3038"/>
+
+  <!-- 麦克风支架 — 弧形 -->
+  <path d="M170 310 Q170 260 220 260 L292 260 Q342 260 342 310"
+        fill="none" stroke="white" stroke-width="14" stroke-linecap="round"/>
+
+  <!-- 麦克风立杆 -->
+  <line x1="256" y1="340" x2="256" y2="380" stroke="white" stroke-width="14" stroke-linecap="round"/>
+
+  <!-- 麦克风底座 -->
+  <rect x="220" y="375" width="72" height="14" rx="7" fill="white"/>
+
+  <!-- 扳手 — 左下角 -->
+  <g transform="translate(120, 400) rotate(-40)">
+    <!-- 扳手头部 -->
+    <path d="M0,-18 L12,-18 Q18,-18 18,-12 L18,6 Q18,12 12,12 L8,12 L8,0 L12,0 Q12,-6 6,-6 L0,-6 Q-6,-6 -6,0 L0,0 L0,12 L-6,12 Q-12,12 -12,6 L-12,-6 Q-12,-12 -6,-12 L0,-12 Z"
+          fill="white" transform="rotate(180)"/>
+    <!-- 手柄 -->
+    <rect x="-4" y="14" width="8" height="28" rx="3" fill="white"/>
+  </g>
+
+  <!-- 齿轮 — 右下角 -->
+  <g transform="translate(400, 410)">
+    <circle cx="0" cy="0" r="16" fill="white"/>
+    <circle cx="0" cy="0" r="8" fill="#2C3038"/>
+    <!-- 齿轮齿 -->
+    <rect x="-4" y="-26" width="8" height="12" rx="2" fill="white"/>
+    <rect x="-4" y="14" width="8" height="12" rx="2" fill="white"/>
+    <rect x="-26" y="-4" width="12" height="8" rx="2" fill="white"/>
+    <rect x="14" y="-4" width="12" height="8" rx="2" fill="white"/>
+    <!-- 斜齿 -->
+    <rect x="-4" y="-26" width="8" height="12" rx="2" fill="white" transform="rotate(45)"/>
+    <rect x="-4" y="14" width="8" height="12" rx="2" fill="white" transform="rotate(45)"/>
+    <rect x="-26" y="-4" width="12" height="8" rx="2" fill="white" transform="rotate(45)"/>
+    <rect x="14" y="-4" width="12" height="8" rx="2" fill="white" transform="rotate(45)"/>
+  </g>
+
+</svg>

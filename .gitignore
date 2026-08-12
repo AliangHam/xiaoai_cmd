@@ -1,0 +1,24 @@
+# Gradle
+.gradle/
+build/
+gradle/wrapper/gradle-wrapper.jar
+
+# Local config
+local.properties
+keystore.properties
+
+# IDE
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# APK output
+app/build/
+*.apk
+
+# Signing keys
+*.jks
+*.keystore
