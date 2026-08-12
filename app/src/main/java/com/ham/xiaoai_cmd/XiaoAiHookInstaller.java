@@ -8,7 +8,7 @@ import android.util.Log;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 
 import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedModule;
@@ -31,6 +31,8 @@ import io.github.libxposed.api.XposedModule;
  * Hook 3 — 返回结果展示：
  *   无独立 showResult 方法，结果数据在 ASR 回调中已包含
  *   策略：在 onAsrResult 中同时捕获 toDisplay/answer，无需额外 Hook
+ *
+ * 性能优化：静态缓存已解析的 Class/Method，避免冷启动时重复搜索。
  */
 final class XiaoAiHookInstaller {
     private static final String TAG = "XiaoAiCmd";
@@ -48,13 +50,42 @@ final class XiaoAiHookInstaller {
             "com.xiaomi.voiceassistant.ConversationFragment$d",    // 稳定内部类
     };
 
+    // ------------------------------------------------------------------
+    // 静态缓存 — 同一进程内跨安装调用复用，避免重复反射搜索
+    // ------------------------------------------------------------------
+
+    /** 类名 → Class 对象缓存 */
+    private static final ConcurrentHashMap<String, Class<?>> classCache =
+            new ConcurrentHashMap<>();
+
+    /** 缓存 ActivityThread.currentApplication 方法，避免每次查找 */
+    private static volatile Method cachedCurrentAppMethod;
+
     private final XposedModule module;
     private volatile boolean channelCreated;
     private volatile Context cachedContext;
-    private List<XposedInterface.HookHandle> hookHandles;
 
     XiaoAiHookInstaller(XposedModule module) {
         this.module = module;
+    }
+
+    // ------------------------------------------------------------------
+    // 类查找缓存
+    // ------------------------------------------------------------------
+
+    /**
+     * 带缓存的类查找。首次查找后结果存入静态 Map，后续调用直接命中。
+     */
+    private static Class<?> findClass(ClassLoader cl, String name) {
+        Class<?> cached = classCache.get(name);
+        if (cached != null) return cached;
+        try {
+            Class<?> clazz = cl.loadClass(name);
+            classCache.put(name, clazz);
+            return clazz;
+        } catch (ClassNotFoundException e) {
+            return null;
+        }
     }
 
     // ------------------------------------------------------------------
@@ -81,8 +112,13 @@ final class XiaoAiHookInstaller {
 
     private static Context getApplicationFromActivityThread() {
         try {
-            Class<?> atClass = Class.forName("android.app.ActivityThread");
-            Method method = atClass.getMethod("currentApplication");
+            // 缓存 Method 对象，避免每次反射查找
+            Method method = cachedCurrentAppMethod;
+            if (method == null) {
+                Class<?> atClass = Class.forName("android.app.ActivityThread");
+                method = atClass.getMethod("currentApplication");
+                cachedCurrentAppMethod = method;
+            }
             Object app = method.invoke(null);
             if (app instanceof Context) return (Context) app;
         } catch (Exception ignored) {
@@ -135,8 +171,7 @@ final class XiaoAiHookInstaller {
     // 安装所有 Hook
     // ------------------------------------------------------------------
 
-    void installAll(ClassLoader classLoader, List<XposedInterface.HookHandle> handles) {
-        this.hookHandles = handles;
+    void installAll(ClassLoader classLoader) {
         installTextSendHook(classLoader);
         installAsrResultHook(classLoader);
     }
@@ -151,7 +186,11 @@ final class XiaoAiHookInstaller {
     private void installTextSendHook(ClassLoader classLoader) {
         for (String className : TEXT_SEND_CANDIDATES) {
             try {
-                Class<?> clazz = classLoader.loadClass(className);
+                Class<?> clazz = findClass(classLoader, className);
+                if (clazz == null) {
+                    module.log(Log.DEBUG, TAG, "event=class_not_found class=" + className);
+                    continue;
+                }
                 Method target = findMethodByName(clazz, "onSendClick");
                 if (target == null) {
                     module.log(Log.DEBUG, TAG,
@@ -160,7 +199,7 @@ final class XiaoAiHookInstaller {
                 }
                 target.setAccessible(true);
 
-                var handle = module.hook(target)
+                module.hook(target)
                         .setId("xiaoai_text_send")
                         .setExceptionMode(XposedInterface.ExceptionMode.DEFAULT)
                         .intercept(chain -> {
@@ -180,12 +219,9 @@ final class XiaoAiHookInstaller {
                             return chain.proceed();
                         });
 
-                hookHandles.add(handle);
                 module.log(Log.INFO, TAG,
                         "event=hook_registered class=" + className + " method=onSendClick");
                 return; // 成功注册，退出循环
-            } catch (ClassNotFoundException e) {
-                module.log(Log.DEBUG, TAG, "event=class_not_found class=" + className);
             } catch (Throwable t) {
                 module.log(Log.WARN, TAG,
                         "event=install_failed class=" + className + " hook=text_send", t);
@@ -205,8 +241,12 @@ final class XiaoAiHookInstaller {
 
     private void installAsrResultHook(ClassLoader classLoader) {
         try {
-            Class<?> uiManagerClass = classLoader.loadClass(
+            Class<?> uiManagerClass = findClass(classLoader,
                     "com.xiaomi.voiceassistant.UiManager");
+            if (uiManagerClass == null) {
+                module.log(Log.WARN, TAG, "event=class_not_found class=UiManager");
+                return;
+            }
             Method target = findMethodByName(uiManagerClass, "onAsrResult");
             if (target == null) {
                 module.log(Log.WARN, TAG,
@@ -215,7 +255,7 @@ final class XiaoAiHookInstaller {
             }
             target.setAccessible(true);
 
-            var handle = module.hook(target)
+            module.hook(target)
                     .setId("xiaoai_asr_result")
                     .setExceptionMode(XposedInterface.ExceptionMode.DEFAULT)
                     .intercept(chain -> {
@@ -262,10 +302,7 @@ final class XiaoAiHookInstaller {
                         return chain.proceed();
                     });
 
-            hookHandles.add(handle);
             module.log(Log.INFO, TAG, "event=hook_registered method=UiManager.onAsrResult");
-        } catch (ClassNotFoundException e) {
-            module.log(Log.WARN, TAG, "event=class_not_found class=UiManager", e);
         } catch (Throwable t) {
             module.log(Log.ERROR, TAG, "event=install_failed hook=asr_result", t);
         }
