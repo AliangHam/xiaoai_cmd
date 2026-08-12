@@ -14,7 +14,7 @@ LSPosed 模块 — Hook 小米语音助手（超级小爱），捕获文本输�
 
 ## 环境要求
 
-- Android 8.1+ (API 27+)
+- Android 15+ (API 35+)
 - LSPosed (libxposed API 102)
 - 目标应用：`com.miui.voiceassist`（超级小爱）
 

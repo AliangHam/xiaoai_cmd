@@ -13,12 +13,12 @@ if (keystorePropertiesFile.exists()) {
 
 android {
     namespace = "com.ham.xiaoai_cmd"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.ham.xiaoai_cmd"
-        minSdk = 27
-        targetSdk = 35
+        minSdk = 35
+        targetSdk = 36
         versionCode = 1
         versionName = "1.0.0"
     }
