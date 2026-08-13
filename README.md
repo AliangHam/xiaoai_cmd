@@ -6,11 +6,12 @@ LSPosed 模块 — Hook 小米语音助手（超级小爱），捕获文本输�
 
 | Hook | 说明 | 通知 |
 |---|---|---|
-| 文本发送 | `onSendClick(String, String)` | "文本指令" |
-| ASR 语音结果 | `UiManager.onAsrResult(u20.b)` | "语音指令" + "返回结果" |
+| 文本发送 | `onSendClick` / `w` / `V3.onAction` 三条链路 | "文本指令" |
+| ASR 语音结果 | `UiManager.onAsrResult` | "语音指令" + "返回结果" |
 
 - 通知渠道默认静音、无悬浮、无振动
 - 通知 3 秒后自动清除
+- 按通知类型 5 秒去重，避免重复刷屏
 
 ## 环境要求
 
@@ -31,19 +32,18 @@ LSPosed 模块 — Hook 小米语音助手（超级小爱），捕获文本输�
 1. 安装 APK
 2. 在 LSPosed 管理器中启用模块，勾选作用域 `com.miui.voiceassist`
 3. 强制停止超级小爱后重新打开
-4. 查看日志：`adb logcat -s XiaoAiCmd`
 
 ## Hook 策略
 
 基于 `超级小爱 v7.13.32.0016` 静态分析，采用多策略回退应对混淆变化：
 
-- **文本发送**：候选类名列表逐个尝试（`gf0.d0` → `ConversationFragment$d`）
-- **ASR 结果**：锚定稳定类 `UiManager`（不混淆），通过反射读取 `u20.b` 字段（`query`/`toDisplay`/`answer`）
+- **文本发送**（三条链路）：
+  - `gf0.d0.onSendClick` — 混淆类，当前版本可用
+  - `gf0.d0.w` — final 汇聚点，子类不可覆盖，最可靠
+  - `InputModuleViewModelV3.onAction` — 未混淆稳定类，终极兜底
+- **ASR 结果**：锚定稳定类 `UiManager`（不混淆），优先 getter 方法、回退字段反射
 - **Context 获取**：三级回退（对象字段 → `ActivityThread.currentApplication()`）
-
-## Hot Reload
-
-支持 API 102 Hot Reload。模块 APK 更新后，已运行的目标进程会自动热重载 Hook，无需强停重启。
+- **类缓存**：静态 `ConcurrentHashMap` 缓存已解析的 Class/Method，优化冷启动性能
 
 ## 技术栈
 
@@ -57,13 +57,13 @@ LSPosed 模块 — Hook 小米语音助手（超级小爱），捕获文本输�
 ```
 app/src/main/
 ├── java/com/ham/xiaoai_cmd/
-│   ├── ModuleMain.java          # 入口类（生命周期 + Hot Reload）
-│   └── XiaoAiHookInstaller.java # Hook 安装器（通知 + 反射）
+│   ├── ModuleMain.java          # 入口类（生命周期）
+│   └── XiaoAiHookInstaller.java # Hook 安装器（通知 + 反射 + 去重）
 ├── res/
 │   └── mipmap-*/ic_launcher.png # 应用图标
 └── resources/META-INF/xposed/
     ├── java_init.list            # 入口类声明
-    ├── module.prop               # 模块配置（API 102, autoHotReload）
+    ├── module.prop               # 模块配置（API 102）
     └── scope.list                # 作用域（com.miui.voiceassist）
 ```
 
