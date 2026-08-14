@@ -8,27 +8,27 @@ import android.util.Log;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 
 import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedModule;
 
 /**
- * 小米语音助手 Hook 安装器 v3.1
+ * 小米语音助手 Hook 安装器 v4.0
  *
- * 参考 BeanShell v3.1 策略，三条文本发送链路 + ASR 语音结果：
+ * 自动适配多版本（v7.13 / v8.0+）混淆变化：
  *
  * Hook 1 — 文本输入发送（三条链路）：
- *   A. gf0.d0.onSendClick(String, String)V — 混淆类，当前版本可用
- *   B. gf0.d0.w(String)V — final 汇聚点，子类不可覆盖，最可靠
- *   C. InputModuleViewModelV3.onAction(b.n)V — 未混淆稳定类，终极兜底
- *      用类名判断 action 类型（$n=发送, $f=编辑），避免打字过程抛异常
+ *   A. 混淆类.onSendClick(String, String)V — 候选 e81/e0(v8) / gf0.d0(v7)
+ *   B. a2$d.onSendClick — 子类覆盖版本，直接捕获最终发送
+ *   C. V3 ViewModel.onAction — 终极兜底，候选 inputmodulev3/e(v8) / InputModuleViewModelV3(v7)
  *
  * Hook 2 — ASR 语音识别结果：
- *   UiManager.onAsrResult(u20.b)V — 稳定单例类
- *   通过反射调用 getQuery()/getToDisplay()/getAnswer() 方法读取结果
+ *   UiManager.onAsrResult — 稳定单例类，参数类候选 et0/b(v8) / u20.b(v7)
  *
- * 通知优化：文本截断 80 字、去换行、按 notifyId 5 秒去重
+ * 版本适配策略：运行时按类名探测，加载成功即使用，无需硬编码版本号。
  */
 final class XiaoAiHookInstaller {
     private static final String TAG = "XiaoAiCmd";
@@ -39,32 +39,36 @@ final class XiaoAiHookInstaller {
     private static final int NOTIFY_TEXT_CMD = 1001;
     private static final int NOTIFY_ASR = 1002;
 
-    // 文本发送 Hook 的候选混淆类名
+    // ------------------------------------------------------------------
+    // 文本发送 Hook 候选类（按优先级排列，新版本在前）
+    // ------------------------------------------------------------------
     private static final String[] TEXT_SEND_CANDIDATES = {
-            "gf0.d0",
-            "com.xiaomi.voiceassistant.ConversationFragment$d",
+            "e81.e0",                                              // v8.0 混淆类
+            "gf0.d0",                                              // v7.13 混淆类
+            "com.xiaomi.voiceassistant.ConversationFragment$d",    // 稳定内部类
     };
 
-    // InputModuleViewModelV3 — 未混淆稳定类，终极兜底
-    private static final String V3_CLASS =
-            "com.xiaomi.voiceassistant.mainui.inputmodulev3.InputModuleViewModelV3";
+    // V3 ViewModel 候选类（v8.0 混淆了，v7.13 未混淆）
+    private static final String[] V3_VIEWMODEL_CANDIDATES = {
+            "com.xiaomi.voiceassistant.mainui.inputmodulev3.e",    // v8.0 混淆类
+            "com.xiaomi.voiceassistant.mainui.inputmodulev3.InputModuleViewModelV3", // v7.13
+    };
 
     // ------------------------------------------------------------------
-    // 静态缓存 — 同一进程内复用，避免重复反射搜索
+    // 静态缓存
     // ------------------------------------------------------------------
     private static final ConcurrentHashMap<String, Class<?>> classCache =
             new ConcurrentHashMap<>();
     private static volatile Method cachedCurrentAppMethod;
 
     // ------------------------------------------------------------------
-    // 去重状态 — 按 notifyId 分开维护，5 秒内同文本不重复
+    // 去重状态
     // ------------------------------------------------------------------
     private volatile String lastText1001 = "";
     private volatile long lastTime1001 = 0;
     private volatile String lastText1002 = "";
     private volatile long lastTime1002 = 0;
 
-    // 已注册的 hook key，避免同一方法重复挂载
     private final ConcurrentHashMap<String, Boolean> hookedKeys = new ConcurrentHashMap<>();
 
     private final XposedModule module;
@@ -91,8 +95,19 @@ final class XiaoAiHookInstaller {
         }
     }
 
+    /**
+     * 从候选列表中找到第一个存在的类。
+     */
+    private static Class<?> findClassFromCandidates(ClassLoader cl, String[] candidates) {
+        for (String name : candidates) {
+            Class<?> clazz = findClass(cl, name);
+            if (clazz != null) return clazz;
+        }
+        return null;
+    }
+
     // ------------------------------------------------------------------
-    // Context 获取 — 三级回退
+    // Context 获取
     // ------------------------------------------------------------------
 
     private Context getContext(Object thisObj) {
@@ -126,7 +141,7 @@ final class XiaoAiHookInstaller {
     }
 
     // ------------------------------------------------------------------
-    // 通知 — 静音渠道 + 文本截断 + 按 notifyId 去重
+    // 通知
     // ------------------------------------------------------------------
 
     private void ensureChannel(Context context) {
@@ -166,9 +181,6 @@ final class XiaoAiHookInstaller {
         }
     }
 
-    /**
-     * 文本截断：去换行 + 限长 80 字。
-     */
     private static String trimText(String s, int maxLen) {
         if (s == null) return "";
         String t = s.replace('\n', ' ').replace('\r', ' ').trim();
@@ -176,9 +188,6 @@ final class XiaoAiHookInstaller {
         return t;
     }
 
-    /**
-     * 按 notifyId 去重发送，5 秒内同文本不重复通知。
-     */
     private void sendNotificationDedup(int notifyId, String title, String content, Object thisObj) {
         String text = trimText(content, 80);
         if (text.isEmpty()) return;
@@ -210,41 +219,32 @@ final class XiaoAiHookInstaller {
     }
 
     // ------------------------------------------------------------------
-    // Hook 1: 文本输入发送 — 三条链路
-    //
-    // 发送链路（v7.13.x）：
-    //   InputModuleViewV3 发送按钮 -> InputModuleViewModelV3.onAction(b.n)
-    //     -> 接口 c.onSendClick -> ConversationFragment$d.onSendClick
-    //     -> super.onSendClick(gf0.d0) -> gf0.d0.w() (final) -> i0.startQuery()
+    // Hook 1: 文本输入发送
     // ------------------------------------------------------------------
 
     private void installTextSendHooks(ClassLoader classLoader) {
-        // 策略 A+B：混淆类 onSendClick + w（final 汇聚点）
-        Class<?> targetClass = null;
-        for (String className : TEXT_SEND_CANDIDATES) {
-            targetClass = findClass(classLoader, className);
-            if (targetClass != null) {
-                module.log(Log.INFO, TAG, "event=text_send_class_found class=" + className);
-                break;
-            }
-        }
-
-        if (targetClass != null) {
-            hookTextMethod(targetClass, "onSendClick");
-            hookTextMethod(targetClass, "w");
+        // 策略 A：混淆实现类的 onSendClick
+        Class<?> implClass = findClassFromCandidates(classLoader, TEXT_SEND_CANDIDATES);
+        if (implClass != null) {
+            module.log(Log.INFO, TAG,
+                    "event=text_send_class_found class=" + implClass.getName());
+            hookTextMethod(implClass, "onSendClick");
         } else {
             module.log(Log.WARN, TAG,
-                    "event=all_candidates_failed hook=text_send — 请检查类名是否随版本变化");
+                    "event=all_candidates_failed hook=text_send");
         }
 
-        // 策略 C：InputModuleViewModelV3.onAction — 未混淆稳定类，终极兜底
+        // 策略 B：a2$d 子类覆盖的 onSendClick（同时存在于 v7.13 和 v8.0）
+        Class<?> a2d = findClass(classLoader,
+                "com.xiaomi.voiceassistant.a2$d");
+        if (a2d != null) {
+            hookTextMethod(a2d, "onSendClick");
+        }
+
+        // 策略 C：V3 ViewModel.onAction — 终极兜底
         installV3FallbackHook(classLoader);
     }
 
-    /**
-     * Hook 文本发送方法：onSendClick(String,String)V 或 w(String)V。
-     * 用 hook key 防止重复挂载。
-     */
     private void hookTextMethod(Class<?> clazz, String methodName) {
         String key = clazz.getName() + "#" + methodName;
         if (hookedKeys.containsKey(key)) return;
@@ -259,14 +259,15 @@ final class XiaoAiHookInstaller {
 
         try {
             module.hook(target)
-                    .setId("xiaoai_text_" + methodName)
+                    .setId("xiaoai_text_" + methodName + "_" + clazz.getSimpleName())
                     .setExceptionMode(XposedInterface.ExceptionMode.DEFAULT)
                     .intercept(chain -> {
                         try {
                             Object arg0 = chain.getArg(0);
                             if (arg0 instanceof String text && !text.isEmpty()) {
                                 module.log(Log.INFO, TAG,
-                                        "event=text_send method=" + methodName + " text=" + text);
+                                        "event=text_send class=" + clazz.getSimpleName()
+                                                + " text=" + text);
                                 sendNotificationDedup(NOTIFY_TEXT_CMD, "文本指令",
                                         text, chain.getThisObject());
                             }
@@ -278,8 +279,8 @@ final class XiaoAiHookInstaller {
                     });
 
             hookedKeys.put(key, true);
-            module.log(Log.INFO, TAG, "event=hook_registered class=" + clazz.getName()
-                    + " method=" + methodName);
+            module.log(Log.INFO, TAG,
+                    "event=hook_registered class=" + clazz.getName() + " method=" + methodName);
         } catch (Throwable t) {
             module.log(Log.WARN, TAG,
                     "event=install_failed class=" + clazz.getName() + " method=" + methodName, t);
@@ -287,25 +288,23 @@ final class XiaoAiHookInstaller {
     }
 
     /**
-     * 策略 C：InputModuleViewModelV3.onAction — 终极兜底。
-     * 用类名后缀判断 action 类型：
-     *   b.n → 发送 action（需要捕获）
-     *   b.f → 编辑 action（跳过，避免打字过程反复抛异常）
+     * 策略 C：V3 ViewModel.onAction — 终极兜底。
+     * 兼容 v7.13（单参 b.n）和 v8.0（双参 f20/a, f20/i）。
      */
     private void installV3FallbackHook(ClassLoader classLoader) {
-        Class<?> v3Class = findClass(classLoader, V3_CLASS);
+        Class<?> v3Class = findClassFromCandidates(classLoader, V3_VIEWMODEL_CANDIDATES);
         if (v3Class == null) {
-            module.log(Log.DEBUG, TAG, "event=class_not_found class=InputModuleViewModelV3");
+            module.log(Log.DEBUG, TAG, "event=v3_class_not_found");
             return;
         }
 
-        String key = V3_CLASS + "#onAction";
+        String key = v3Class.getName() + "#onAction";
         if (hookedKeys.containsKey(key)) return;
 
         Method target = findMethodByName(v3Class, "onAction");
         if (target == null) {
             module.log(Log.DEBUG, TAG,
-                    "event=method_not_found class=InputModuleViewModelV3 method=onAction");
+                    "event=method_not_found class=" + v3Class.getName() + " method=onAction");
             return;
         }
         target.setAccessible(true);
@@ -316,14 +315,26 @@ final class XiaoAiHookInstaller {
                     .setExceptionMode(XposedInterface.ExceptionMode.DEFAULT)
                     .intercept(chain -> {
                         try {
+                            // v7.13: onAction(Object action) — arg(0) 是 b.n
+                            // v8.0:  onAction(f20/a, f20/i) — arg(0) 是 action 类型
                             Object action = chain.getArg(0);
                             if (action == null) return chain.proceed();
 
-                            // 类名后缀判断：$n = 发送 action，其他跳过
                             String className = action.getClass().getName();
-                            if (!className.endsWith("$n")) return chain.proceed();
 
-                            // 反射调用 getText() 获取发送文本
+                            // v7.13: 发送 action 类名以 $n 结尾
+                            if (className.endsWith("$n")) {
+                                Object text = callMethod(action, "getText");
+                                if (text instanceof String s && !s.isEmpty()) {
+                                    module.log(Log.INFO, TAG,
+                                            "event=v3_action_send text=" + s);
+                                    sendNotificationDedup(NOTIFY_TEXT_CMD, "文本指令",
+                                            s, chain.getThisObject());
+                                }
+                                return chain.proceed();
+                            }
+
+                            // v8.0+: 尝试 getText()（兼容未来 action 类型）
                             Object text = callMethod(action, "getText");
                             if (text instanceof String s && !s.isEmpty()) {
                                 module.log(Log.INFO, TAG,
@@ -332,23 +343,20 @@ final class XiaoAiHookInstaller {
                                         s, chain.getThisObject());
                             }
                         } catch (Exception ignored) {
-                            // 非发送 action，忽略
                         }
                         return chain.proceed();
                     });
 
             hookedKeys.put(key, true);
-            module.log(Log.INFO, TAG, "event=hook_registered method=InputModuleViewModelV3.onAction");
+            module.log(Log.INFO, TAG,
+                    "event=hook_registered class=" + v3Class.getName() + " method=onAction");
         } catch (Throwable t) {
             module.log(Log.WARN, TAG, "event=install_failed hook=v3_onaction", t);
         }
     }
 
     // ------------------------------------------------------------------
-    // Hook 2: ASR 语音识别结果 — UiManager.onAsrResult(u20.b)V
-    //
-    // UiManager 是稳定单例类，不被混淆
-    // 通过反射调用 getter 方法读取结果（比字段访问更稳定）
+    // Hook 2: ASR 语音识别结果
     // ------------------------------------------------------------------
 
     private void installAsrResultHook(ClassLoader classLoader) {
@@ -359,6 +367,7 @@ final class XiaoAiHookInstaller {
             return;
         }
 
+        // 按方法名查找（v7.13 参数 u20.b，v8.0 参数 et0/b，签名不同）
         Method target = findMethodByName(uiManagerClass, "onAsrResult");
         if (target == null) {
             module.log(Log.WARN, TAG,
@@ -366,6 +375,8 @@ final class XiaoAiHookInstaller {
             return;
         }
         target.setAccessible(true);
+        module.log(Log.INFO, TAG,
+                "event=asr_method_found sig=" + target.getParameterTypes()[0].getName());
 
         try {
             module.hook(target)
@@ -375,23 +386,14 @@ final class XiaoAiHookInstaller {
                         try {
                             Object asrResult = chain.getArg(0);
                             if (asrResult != null) {
-                                // 优先用 getter 方法（比字段访问更稳定）
-                                String query = callStringMethod(asrResult, "getQuery");
-                                String toDisplay = callStringMethod(asrResult, "getToDisplay");
-                                String answer = callStringMethod(asrResult, "getAnswer");
-                                String answerText = callStringMethod(asrResult, "getAnswerText");
-                                String domain = callStringMethod(asrResult, "getDomain");
-                                String action = callStringMethod(asrResult, "getAction");
+                                // 字段名跨版本稳定（query/toDisplay/answer 等）
+                                String query = getStringField(asrResult, "query");
+                                String toDisplay = getStringField(asrResult, "toDisplay");
+                                String answer = getStringField(asrResult, "answer");
+                                String answerText = getStringField(asrResult, "answerText");
+                                String domain = getStringField(asrResult, "domain");
+                                String action = getStringField(asrResult, "action");
 
-                                // getter 失败时回退到字段访问
-                                if (query == null) query = getStringField(asrResult, "query");
-                                if (toDisplay == null) toDisplay = getStringField(asrResult, "toDisplay");
-                                if (answer == null) answer = getStringField(asrResult, "answer");
-                                if (answerText == null) answerText = getStringField(asrResult, "answerText");
-                                if (domain == null) domain = getStringField(asrResult, "domain");
-                                if (action == null) action = getStringField(asrResult, "action");
-
-                                // 语音指令通知
                                 if (query != null && !query.isEmpty()) {
                                     module.log(Log.INFO, TAG,
                                             "event=asr_query query=" + query
@@ -402,7 +404,6 @@ final class XiaoAiHookInstaller {
                                             chain.getThisObject());
                                 }
 
-                                // 返回结果通知
                                 String displayText = firstNonEmpty(toDisplay, answer, answerText);
                                 if (displayText != null && !displayText.isEmpty()) {
                                     module.log(Log.INFO, TAG,
@@ -434,22 +435,6 @@ final class XiaoAiHookInstaller {
         return null;
     }
 
-    /**
-     * 反射调用无参方法，返回 String 结果。失败返回 null。
-     */
-    private static String callStringMethod(Object obj, String methodName) {
-        try {
-            Method m = obj.getClass().getMethod(methodName);
-            Object val = m.invoke(obj);
-            return val instanceof String ? (String) val : null;
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    /**
-     * 反射调用无参方法，返回 Object。失败返回 null。
-     */
     private static Object callMethod(Object obj, String methodName) {
         try {
             Method m = obj.getClass().getMethod(methodName);
